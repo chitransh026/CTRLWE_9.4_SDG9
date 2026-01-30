@@ -4,8 +4,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time
 from dotenv import load_dotenv
-load_dotenv()
-# Import ML inference
+load_dotenv()  
+ # Add to alerts.py after load_dotenv()
+import os
+print("DEBUG - Loaded values:")
+print(f"SID exists: {bool(os.getenv('TWILIO_ACCOUNT_SID'))}")
+print(f"Token exists: {bool(os.getenv('TWILIO_AUTH_TOKEN'))}")
+print(f"From: {os.getenv('TWILIO_PHONE_NUMBER')}")
+print(f"To: {os.getenv('ALERT_RECIPIENT_PHONE')}")   # Import ML inference
 from models.inference import predict_from_dataframe
 
 # Import analytics utilities (from services folder)
@@ -15,7 +21,7 @@ from services.analytics import (
     get_machine_analytics
 )
 from services.gemini_ai import get_ai_service
-
+from alerts import trigger_alerts
 # ================= PAGE CONFIG =================
 st.set_page_config(
     page_title="Industrial Maintenance Intelligence",
@@ -250,6 +256,22 @@ page = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
+# Alert system status
+from alerts import is_configured
+
+alert_status = "Configured" if is_configured() else "Not Configured"
+alert_color = "#34d399" if is_configured() else "#fbbf24"
+
+st.sidebar.markdown(f"""
+<div style="padding: 1rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px; border-left: 3px solid #4a9eff; margin-top: 1rem;">
+    <p style="font-size: 0.75rem; color: #b8c5d6; margin: 0;"><strong>Alert System</strong></p>
+    <p style="font-size: 0.7rem; color: #7a92a8; margin-top: 0.5rem;">
+        • Twilio: <span style="color: {alert_color};">{alert_status}</span><br>
+        • SMS: <span style="color: {alert_color};">{'Ready' if is_configured() else 'Pending'}</span><br>
+        • WhatsApp: <span style="color: {alert_color};">{'Ready' if is_configured() else 'Pending'}</span>
+    </p>
+</div>
+""", unsafe_allow_html=True) 
 # Dynamic system status based on predictions
 ml_status = "Active" if st.session_state.predictions is not None else "Standby"
 ml_color = "#34d399" if st.session_state.predictions is not None else "#fbbf24"
@@ -799,7 +821,24 @@ elif page == "🤖 AI Intelligence Hub":
         st.session_state.ai_analysis = analysis_result
         st.session_state.ai_analysis_machine = selected_machine
         st.session_state.ai_analysis_depth = analysis_depth
-    
+        
+        # ==================== ALERT AUTOMATION ====================
+        # Trigger SMS/WhatsApp alerts based on machine health
+        if analysis_result.get('status') == 'success':
+            alert_result = trigger_alerts(
+                machine_row=machine_data,
+                prediction_row=prediction_data,
+                ai_analysis=analysis_result.get('full_response', '')
+            )
+            
+            # Show alert status to user (non-blocking)
+            if alert_result['alert_triggered']:
+                alert_msg = f"📢 {alert_result['message']}"
+                if alert_result['sms_sent'] or alert_result['whatsapp_sent']:
+                    st.success(alert_msg)
+                else:
+                    st.warning(f"{alert_msg} (Alerts not configured)")
+        # ==================== END ALERT AUTOMATION ====================
     # Display AI analysis if available
     if 'ai_analysis' in st.session_state:
         analysis = st.session_state.ai_analysis
