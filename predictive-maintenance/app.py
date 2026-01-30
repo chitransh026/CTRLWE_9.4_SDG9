@@ -4,6 +4,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time
 
+# Import ML inference
+from models.inference import predict_from_dataframe
+
 # ================= PAGE CONFIG =================
 st.set_page_config(
     page_title="Industrial Maintenance Intelligence",
@@ -216,6 +219,14 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ================= INITIALIZE SESSION STATE =================
+if 'predictions' not in st.session_state:
+    st.session_state.predictions = None
+if 'uploaded_data' not in st.session_state:
+    st.session_state.uploaded_data = None
+if 'last_health_update' not in st.session_state:
+    st.session_state.last_health_update = pd.Timestamp.now()
+
 # ================= SIDEBAR =================
 st.sidebar.markdown("### 🎛️ Navigation")
 page = st.sidebar.radio(
@@ -225,11 +236,16 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
+
+# Dynamic system status based on predictions
+ml_status = "Active" if st.session_state.predictions is not None else "Standby"
+ml_color = "#34d399" if st.session_state.predictions is not None else "#fbbf24"
+
+st.sidebar.markdown(f"""
 <div style="padding: 1rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px; border-left: 3px solid #4a9eff;">
     <p style="font-size: 0.75rem; color: #b8c5d6; margin: 0;"><strong>System Status</strong></p>
     <p style="font-size: 0.7rem; color: #7a92a8; margin-top: 0.5rem;">
-        • ML Engine: <span style="color: #fbbf24;">Standby</span><br>
+        • ML Engine: <span style="color: {ml_color};">{ml_status}</span><br>
         • Data Pipeline: <span style="color: #34d399;">Active</span><br>
         • API: <span style="color: #34d399;">Connected</span>
     </p>
@@ -240,46 +256,130 @@ st.sidebar.markdown("""
 if page == "🏠 Operations Dashboard":
     st.markdown("### 📈 Factory Operations Overview")
     
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="Total Assets",
-            value="—",
-            delta="Awaiting data"
+    # Check if predictions are available
+    if st.session_state.predictions is not None and st.session_state.uploaded_data is not None:
+        predictions = st.session_state.predictions
+        uploaded_data = st.session_state.uploaded_data
+        
+        total_assets = len(predictions)
+        
+        # Classify assets by efficiency
+        operational = len(predictions[predictions['efficiency_index'] >= 70])
+        attention = len(predictions[(predictions['efficiency_index'] >= 40) & (predictions['efficiency_index'] < 70)])
+        critical = len(predictions[predictions['efficiency_index'] < 40])
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="Total Assets",
+                value=total_assets,
+                delta=None
+            )
+        
+        with col2:
+            operational_pct = (operational / total_assets * 100) if total_assets > 0 else 0
+            st.metric(
+                label="Operational",
+                value=operational,
+                delta=f"{operational_pct:.1f}%"
+            )
+        
+        with col3:
+            st.metric(
+                label="Attention Required",
+                value=attention,
+                delta=f"{attention}" if attention > 0 else "0"
+            )
+        
+        with col4:
+            st.metric(
+                label="Critical Alerts",
+                value=critical,
+                delta=f"{critical}" if critical > 0 else "0"
+            )
+        
+        st.markdown("---")
+        
+        # Display asset summary table
+        st.markdown("### 🎯 Asset Health Summary")
+        
+        # Merge uploaded data with predictions
+        summary_df = uploaded_data.copy()
+        summary_df['Efficiency Index'] = predictions['efficiency_index'].values
+        summary_df['Vibration Index'] = predictions['vibration_index'].values
+        summary_df['Thermal Index'] = predictions['thermal_index'].values
+        
+        # Add status classification
+        def classify_status(efficiency):
+            if efficiency >= 70:
+                return "🟢 Operational"
+            elif efficiency >= 40:
+                return "🟡 Attention"
+            else:
+                return "🔴 Critical"
+        
+        summary_df['Status'] = summary_df['Efficiency Index'].apply(classify_status)
+        
+        # Display key columns
+        display_cols = []
+        if 'machine_id' in summary_df.columns:
+            display_cols.append('machine_id')
+        if 'machine_type' in summary_df.columns:
+            display_cols.append('machine_type')
+        display_cols.extend(['Status', 'Efficiency Index', 'Vibration Index', 'Thermal Index'])
+        
+        st.dataframe(
+            summary_df[display_cols].style.format({
+                'Efficiency Index': '{:.1f}',
+                'Vibration Index': '{:.1f}',
+                'Thermal Index': '{:.1f}'
+            }),
+            use_container_width=True,
+            height=400
         )
-    
-    with col2:
-        st.metric(
-            label="Operational",
-            value="—",
-            delta="0%"
-        )
-    
-    with col3:
-        st.metric(
-            label="Attention Required",
-            value="—",
-            delta="0"
-        )
-    
-    with col4:
-        st.metric(
-            label="Critical Alerts",
-            value="—",
-            delta="0"
-        )
-    
-    st.markdown("---")
-    
-    st.markdown("""
-    <div style="padding: 2rem; background: rgba(74, 158, 255, 0.05); border-radius: 8px; border: 1px solid #2d4a5f; text-align: center;">
-        <p style="color: #7a92a8; font-size: 0.95rem;">
-            ⚙️ Machine health monitoring will be displayed here once the prediction engine is integrated.<br>
-            <span style="font-size: 0.85rem;">Connect your ML model to begin real-time asset tracking.</span>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+        
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="Total Assets",
+                value="—",
+                delta="Awaiting data"
+            )
+        
+        with col2:
+            st.metric(
+                label="Operational",
+                value="—",
+                delta="0%"
+            )
+        
+        with col3:
+            st.metric(
+                label="Attention Required",
+                value="—",
+                delta="0"
+            )
+        
+        with col4:
+            st.metric(
+                label="Critical Alerts",
+                value="—",
+                delta="0"
+            )
+        
+        st.markdown("---")
+        
+        st.markdown("""
+        <div style="padding: 2rem; background: rgba(74, 158, 255, 0.05); border-radius: 8px; border: 1px solid #2d4a5f; text-align: center;">
+            <p style="color: #7a92a8; font-size: 0.95rem;">
+                ⚙️ Machine health monitoring will be displayed here once the prediction engine is integrated.<br>
+                <span style="font-size: 0.85rem;">Connect your ML model to begin real-time asset tracking.</span>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ================= DATA UPLOAD =================
 elif page == "📥 Data Integration":
@@ -298,10 +398,10 @@ elif page == "📥 Data Integration":
         """, unsafe_allow_html=True)
         
         st.code(
-            "machine_id,machine_type,temperature,vibration,pressure,rpm,operating_cycles\n"
-            "MTR-001,motor,0.45,0.32,0.58,0.70,1247\n"
-            "PMP-042,pump,0.62,0.28,0.71,0.85,2891\n"
-            "CMP-013,compressor,0.51,0.44,0.63,0.68,1563",
+            "machine_id,machine_type,air_temperature_k,process_temperature_k,rotational_speed_rpm,torque_nm,tool_wear_min,temperature,humidity,rainfall\n"
+            "MTR-001,motor,298.5,310.2,1450,42.3,125,25.3,65,0\n"
+            "PMP-042,pump,300.2,315.8,2850,38.5,203,27.0,72,0\n"
+            "CMP-013,compressor,296.5,305.9,3200,52.3,134,23.3,66,0",
             language="csv"
         )
     
@@ -327,6 +427,7 @@ elif page == "📥 Data Integration":
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
+        st.session_state.uploaded_data = df
         
         st.success(f"✓ Successfully loaded {len(df)} records from **{uploaded_file.name}**")
         
@@ -339,50 +440,78 @@ elif page == "📥 Data Integration":
         
         st.dataframe(df, use_container_width=True, height=300)
         
-        st.markdown("""
-        <div style="background: rgba(251, 191, 36, 0.1); padding: 1rem; border-radius: 8px; border-left: 3px solid #fbbf24; margin-top: 1rem;">
-            <p style="color: #fbbf24; margin: 0; font-size: 0.9rem;">
-                ⚠️ <strong>ML Pipeline Pending</strong> — Data ingestion successful. Prediction engine integration required to process uploaded data.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.button("🚀 Process Data", disabled=True, use_container_width=False, help="Prediction engine not yet connected")
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        if st.button("🚀 Process Data", use_container_width=False, help="Run ML inference on uploaded data"):
+            with st.spinner("Running ML inference..."):
+                try:
+                    # Run ML inference
+                    predictions = predict_from_dataframe(df)
+                    
+                    # Store predictions in session state
+                    st.session_state.predictions = predictions
+                    st.session_state.last_health_update = pd.Timestamp.now()
+                    
+                    st.success("✅ ML inference completed successfully!")
+                    st.info(f"📊 Generated predictions for {len(predictions)} assets. Navigate to Fleet Analytics or Operations Dashboard to view results.")
+                    
+                    # Show prediction summary
+                    st.markdown("### 🎯 Prediction Summary")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            label="Avg Vibration Index",
+                            value=f"{predictions['vibration_index'].mean():.1f}"
+                        )
+                    
+                    with col2:
+                        st.metric(
+                            label="Avg Thermal Index",
+                            value=f"{predictions['thermal_index'].mean():.1f}"
+                        )
+                    
+                    with col3:
+                        st.metric(
+                            label="Avg Efficiency",
+                            value=f"{predictions['efficiency_index'].mean():.1f}%"
+                        )
+                    
+                except Exception as e:
+                    st.error(f"❌ ML inference failed: {str(e)}")
+                    st.info("Please ensure your CSV contains the required features for the ML model.")
+    else:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("🚀 Process Data", disabled=True, use_container_width=False, help="Please upload a CSV file first")
 
 # ================= FLEET OVERVIEW =================
 elif page == "📊 Fleet Analytics":
     st.markdown("### 🔧 Comprehensive Fleet Health Analytics")
 
-    # Initialize session state for health indices update cycle
-    if 'last_health_update' not in st.session_state:
-        st.session_state.last_health_update = pd.Timestamp.now()
-        st.session_state.health_data = None
+    # Check if predictions are available
+    if st.session_state.predictions is None:
+        st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
+        st.stop()
+    
+    predictions = st.session_state.predictions
     
     # Calculate time since last update
     time_since_update = (pd.Timestamp.now() - st.session_state.last_health_update).total_seconds()
     
-    # Update health data every 5 minutes (300 seconds)
-    if time_since_update >= 300 or st.session_state.health_data is None:
-        # Simulate health data update (replace with actual calculation later)
-        import random
-        st.session_state.health_data = {
-            'vibration_index': round(random.uniform(60, 85), 1),
-            'vibration_delta': round(random.uniform(-5, 5), 1),
-            'thermal_index': round(random.uniform(55, 75), 1),
-            'thermal_delta': round(random.uniform(-5, 5), 1),
-            'efficiency_index': round(random.uniform(75, 95), 1),
-            'efficiency_delta': round(random.uniform(-5, 5), 1),
-            'failure_risk': round(random.uniform(10, 30), 1),
-            'failure_delta': round(random.uniform(-5, 5), 1),
-        }
-        st.session_state.last_health_update = pd.Timestamp.now()
-        time_since_update = 0
-    
-    # Calculate time until next update
-    time_until_next = 300 - time_since_update
+    # Calculate time until next update (5 minutes = 300 seconds)
+    time_until_next = max(0, 300 - time_since_update)
     minutes_left = int(time_until_next // 60)
     seconds_left = int(time_until_next % 60)
+    
+    # Use real ML predictions
+    vibration_index = predictions['vibration_index'].mean()
+    thermal_index = predictions['thermal_index'].mean()
+    efficiency_index = predictions['efficiency_index'].mean()
+    
+    # Calculate deltas (comparing to baseline of 50 for indices, inverted logic)
+    vibration_delta = vibration_index - 50
+    thermal_delta = thermal_index - 50
+    efficiency_delta = efficiency_index - 75  # baseline 75% for efficiency
     
     # Health Indices Section
     st.markdown("""
@@ -400,13 +529,13 @@ elif page == "📊 Fleet Analytics":
         st.session_state.last_health_update.strftime('%H:%M:%S')
     ), unsafe_allow_html=True)
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric(
             label="Vibration Index",
-            value=st.session_state.health_data['vibration_index'],
-            delta=f"{st.session_state.health_data['vibration_delta']:+.1f}",
+            value=f"{vibration_index:.1f}",
+            delta=f"{vibration_delta:+.1f}",
             delta_color="inverse",
             help="Lower values indicate healthier equipment"
         )
@@ -414,8 +543,8 @@ elif page == "📊 Fleet Analytics":
     with col2:
         st.metric(
             label="Thermal Index",
-            value=st.session_state.health_data['thermal_index'],
-            delta=f"{st.session_state.health_data['thermal_delta']:+.1f}",
+            value=f"{thermal_index:.1f}",
+            delta=f"{thermal_delta:+.1f}",
             delta_color="inverse",
             help="Temperature-based health indicator"
         )
@@ -423,19 +552,10 @@ elif page == "📊 Fleet Analytics":
     with col3:
         st.metric(
             label="Efficiency Index",
-            value=f"{st.session_state.health_data['efficiency_index']}%",
-            delta=f"{st.session_state.health_data['efficiency_delta']:+.1f}%",
+            value=f"{efficiency_index:.1f}%",
+            delta=f"{efficiency_delta:+.1f}%",
             delta_color="normal",
             help="Overall operational efficiency"
-        )
-    
-    with col4:
-        st.metric(
-            label="Failure Risk",
-            value=f"{st.session_state.health_data['failure_risk']}%",
-            delta=f"{st.session_state.health_data['failure_delta']:+.1f}%",
-            delta_color="inverse",
-            help="Predicted likelihood of failure in next 30 days"
         )
     
     st.markdown("---")
@@ -446,19 +566,43 @@ elif page == "📊 Fleet Analytics":
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        placeholder_df = pd.DataFrame({
-            "Asset ID": ["—"],
-            "Type": ["—"],
-            "Risk Level": ["—"],
-            "Priority": ["—"],
-            "Last Maintenance": ["—"]
-        })
-        
-        st.dataframe(
-            placeholder_df,
-            use_container_width=True,
-            height=200
-        )
+        # Create asset status table
+        if st.session_state.uploaded_data is not None:
+            asset_df = st.session_state.uploaded_data.copy()
+            asset_df['Risk Level'] = predictions['efficiency_index'].apply(
+                lambda x: "🟢 Operational" if x >= 70 else ("🟡 Attention" if x >= 40 else "🔴 Critical")
+            )
+            asset_df['Priority'] = predictions['efficiency_index'].apply(
+                lambda x: "Low" if x >= 70 else ("Medium" if x >= 40 else "High")
+            )
+            asset_df['Last Maintenance'] = "—"
+            
+            display_cols = []
+            if 'machine_id' in asset_df.columns:
+                display_cols.append('machine_id')
+            if 'machine_type' in asset_df.columns:
+                display_cols.append('machine_type')
+            display_cols.extend(['Risk Level', 'Priority', 'Last Maintenance'])
+            
+            st.dataframe(
+                asset_df[display_cols].head(10),
+                use_container_width=True,
+                height=200
+            )
+        else:
+            placeholder_df = pd.DataFrame({
+                "Asset ID": ["—"],
+                "Type": ["—"],
+                "Risk Level": ["—"],
+                "Priority": ["—"],
+                "Last Maintenance": ["—"]
+            })
+            
+            st.dataframe(
+                placeholder_df,
+                use_container_width=True,
+                height=200
+            )
     
     with col2:
         st.markdown("""
@@ -477,15 +621,20 @@ elif page == "📊 Fleet Analytics":
     # Fleet Distribution Chart
     st.markdown("### 📊 Fleet Health Distribution")
     
+    # Calculate actual distribution
+    operational_count = len(predictions[predictions['efficiency_index'] >= 70])
+    attention_count = len(predictions[(predictions['efficiency_index'] >= 40) & (predictions['efficiency_index'] < 70)])
+    critical_count = len(predictions[predictions['efficiency_index'] < 40])
+    
     fig = go.Figure(data=[
         go.Bar(
             x=["Operational", "Attention Required", "Critical"],
-            y=[0, 0, 0],
+            y=[operational_count, attention_count, critical_count],
             marker=dict(
                 color=['#34d399', '#fbbf24', '#ef4444'],
                 line=dict(color='#1a2332', width=2)
             ),
-            text=[0, 0, 0],
+            text=[operational_count, attention_count, critical_count],
             textposition='auto',
         )
     ])
@@ -521,12 +670,23 @@ elif page == "📊 Fleet Analytics":
 elif page == "🤖 AI Intelligence Hub":
     st.markdown("### 🧠 AI-Powered Maintenance Intelligence")
     
+    # Check if predictions are available
+    if st.session_state.predictions is None:
+        st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
+        st.stop()
+    
     # Machine selector
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
+        machine_options = []
+        if st.session_state.uploaded_data is not None and 'machine_id' in st.session_state.uploaded_data.columns:
+            machine_options = st.session_state.uploaded_data['machine_id'].tolist()
+        else:
+            machine_options = [f"Asset {i+1}" for i in range(len(st.session_state.predictions))]
+        
         selected_machine = st.selectbox(
             "Select Asset for Analysis",
-            ["MTR-001 (Motor - Production Line A)", "PMP-042 (Pump - Cooling System)", "CMP-013 (Compressor - HVAC)", "TRB-025 (Turbine - Power Gen)"],
+            machine_options,
             help="Choose an asset to view AI-generated insights"
         )
     with col2:
@@ -557,7 +717,7 @@ elif page == "🤖 AI Intelligence Hub":
                     Immediate Maintenance Required
                 </p>
                 <p style="color: #b8c5d6; font-size: 0.85rem; margin-top: 0.8rem; line-height: 1.5;">
-                    High vibration levels detected on MTR-001. Bearing failure risk is elevated to 87%. 
+                    High vibration levels detected on MTR-001. Bearing failure risk is elevated. 
                     Recommend immediate shutdown and inspection.
                 </p>
                 <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(239, 68, 68, 0.3);">
@@ -599,14 +759,14 @@ elif page == "🤖 AI Intelligence Hub":
         # Machine Health Summary
         st.markdown("### 📊 Machine Health Summary")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("""
-            <div style="text-align: center; padding: 1.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
-                <p style="font-size: 2.5rem; margin: 0; color: #ef4444; font-weight: 700;">42</p>
+            <div style="text-align: center; padding: 1.5rem; background: rgba(251, 191, 36, 0.1); border-radius: 8px;">
+                <p style="font-size: 2.5rem; margin: 0; color: #fbbf24; font-weight: 700;">58</p>
                 <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Health Score</p>
-                <p style="font-size: 0.7rem; color: #ef4444; margin-top: 0.3rem;">Critical Range</p>
+                <p style="font-size: 0.7rem; color: #fbbf24; margin-top: 0.3rem;">Attention Range</p>
             </div>
             """, unsafe_allow_html=True)
         
@@ -620,15 +780,6 @@ elif page == "🤖 AI Intelligence Hub":
             """, unsafe_allow_html=True)
         
         with col3:
-            st.markdown("""
-            <div style="text-align: center; padding: 1.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
-                <p style="font-size: 2.5rem; margin: 0; color: #ef4444; font-weight: 700;">87%</p>
-                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Failure Risk</p>
-                <p style="font-size: 0.7rem; color: #ef4444; margin-top: 0.3rem;">High Risk</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
             st.markdown("""
             <div style="text-align: center; padding: 1.5rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px;">
                 <p style="font-size: 2.5rem; margin: 0; color: #4a9eff; font-weight: 700;">2.4</p>
@@ -923,7 +1074,6 @@ elif page == "🤖 AI Intelligence Hub":
                     • Vibration amplitude exceeds ISO 10816 alarm threshold by 340%<br>
                     • Bearing temperature 22°C above normal operating range<br>
                     • Efficiency degradation quantified at 33% below baseline<br>
-                    • Failure probability escalates to 87% within 48-72 hour window<br>
                     • Financial impact: $23,870/month in losses, potential $178,000 catastrophic failure cost
                 </p>
             </div>
@@ -990,12 +1140,23 @@ elif page == "🤖 AI Intelligence Hub":
 elif page == "📄 Reports & Insights":
     st.markdown("### 📋 Automated Maintenance Reporting")
     
+    # Check if predictions are available
+    if st.session_state.predictions is None:
+        st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
+        st.stop()
+    
     col1, col2 = st.columns(2)
     
     with col1:
+        machine_options = []
+        if st.session_state.uploaded_data is not None and 'machine_id' in st.session_state.uploaded_data.columns:
+            machine_options = st.session_state.uploaded_data['machine_id'].tolist()
+        else:
+            machine_options = [f"Asset {i+1}" for i in range(len(st.session_state.predictions))]
+        
         st.selectbox(
             "Select Asset",
-            ["—"],
+            machine_options,
             help="Choose an asset to generate maintenance report"
         )
         
@@ -1014,7 +1175,6 @@ elif page == "📄 Reports & Insights":
             <p style="font-size: 0.75rem; color: #4a9eff; margin: 0 0 1rem 0; font-weight: 600;">📑 REPORT INCLUDES</p>
             <p style="font-size: 0.8rem; color: #b8c5d6; line-height: 1.6; margin: 0;">
                 • Operational performance metrics<br>
-                • Failure risk assessments<br>
                 • Maintenance recommendations<br>
                 • Historical trend analysis<br>
                 • Cost-benefit projections<br>
