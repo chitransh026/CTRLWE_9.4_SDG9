@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import time
 from dotenv import load_dotenv
 load_dotenv()  
- # Add to alerts.py after load_dotenv()
+from datetime import datetime   # Add to alerts.py after load_dotenv()
 import os
 print("DEBUG - Loaded values:")
 print(f"SID exists: {bool(os.getenv('TWILIO_ACCOUNT_SID'))}")
@@ -13,7 +13,7 @@ print(f"Token exists: {bool(os.getenv('TWILIO_AUTH_TOKEN'))}")
 print(f"From: {os.getenv('TWILIO_PHONE_NUMBER')}")
 print(f"To: {os.getenv('ALERT_RECIPIENT_PHONE')}")   # Import ML inference
 from models.inference import predict_from_dataframe
-
+import re  
 # Import analytics utilities (from services folder)
 from services.analytics import (
     enrich_predictions_with_analytics,
@@ -22,7 +22,19 @@ from services.analytics import (
 )
 from services.gemini_ai import get_ai_service
 from alerts import trigger_alerts
-# ================= PAGE CONFIG =================
+# Helper function for PDF report generation
+# Helper function for PDF report generation
+# Helper function for PDF report generation
+def convert_markdown_to_html(text):
+    """Convert markdown to HTML and remove emojis"""
+    # Remove all emojis and special unicode characters
+    text = re.sub(r'[\U0001F300-\U0001F9FF\u2600-\u26FF\u2700-\u27BF]', '', text)
+    
+    # Convert **bold** to <b>bold</b> - use non-greedy match with ANY characters except newline
+    while '**' in text:
+        text = text.replace('**', '<b>', 1).replace('**', '</b>', 1)
+    
+    return text       # ================= PAGE CONFIG ================= 
 st.set_page_config(
     page_title="Industrial Maintenance Intelligence",
     page_icon="⚙️",
@@ -749,7 +761,7 @@ elif page == "📊 Fleet Analytics":
     time.sleep(1)
     st.rerun()
 
-# ================= AI INTELLIGENCE HUB =================
+# ================= AI INTELLIGENCE HUB =================  
 elif page == "🤖 AI Intelligence Hub":
     st.markdown("### 🧠 AI-Powered Maintenance Intelligence")
     
@@ -957,16 +969,174 @@ elif page == "🤖 AI Intelligence Hub":
         st.markdown("<br>", unsafe_allow_html=True)
         
         # Export options
-        col1, col2, col3 = st.columns(3)
+
+        col1, col2 = st.columns(2)
+
         with col1:
-            st.button("📄 Export as PDF", use_container_width=True, disabled=True, help="Feature coming soon")
+            if st.button("📄 Generate Maintenance Report", use_container_width=True, help="Create a detailed AI-generated maintenance report"):
+                # Get machine data and predictions
+                machine_data, prediction_data = get_machine_analytics(
+                    selected_index,
+                    st.session_state.uploaded_data,
+                    st.session_state.predictions
+                )
+                
+                # Extract key information
+                machine_id = machine_data.get('machine_id', 'UNKNOWN')
+                machine_type = machine_data.get('machine_type', 'Unknown Type')
+                health_score = prediction_data.get('health_score', 0)
+                risk_level = prediction_data.get('risk_level', 'Unknown')
+                efficiency = prediction_data.get('efficiency_index', 0)
+                vibration = prediction_data.get('vibration_index', 0)
+                thermal = prediction_data.get('thermal_index', 0)
+                dominant_issue = prediction_data.get('dominant_issue', 'Unknown')
+                
+                # Get existing AI analysis sections
+                ai_analysis = st.session_state.ai_analysis
+                root_cause = ai_analysis.get('root_cause', 'Analysis not available')
+                risk_assessment = ai_analysis.get('risk_assessment', 'Assessment not available')
+                recommendations = ai_analysis.get('maintenance_recommendations', 'Recommendations not available')
+                cost_impact = ai_analysis.get('cost_impact', 'Impact analysis not available')
+                
+                # Generate timestamp
+                report_date = datetime.now().strftime('%B %d, %Y at %H:%M')
+                
+                # Assemble the report
+                report = f"""
+# 📄 MAINTENANCE INTELLIGENCE REPORT
+
+**Generated:** {report_date}  
+**Analysis Depth:** {st.session_state.ai_analysis_depth}
+
+---
+
+## 1️⃣ EXECUTIVE SUMMARY
+
+**Asset Identification**
+- **Machine ID:** {machine_id}
+- **Machine Type:** {machine_type}
+- **Health Score:** {health_score:.1f}/100
+- **Risk Level:** {risk_level}
+- **Status:** {'🔴 CRITICAL - Immediate Action Required' if risk_level == 'Critical' else '🟠 HIGH RISK - Urgent Attention Needed' if risk_level == 'High' else '🟡 MODERATE RISK - Schedule Maintenance' if risk_level == 'Medium' else '🟢 OPERATIONAL - Monitor Regularly'}
+
+---
+
+## 2️⃣ CURRENT MACHINE CONDITION
+
+**Performance Metrics**
+- **Efficiency Index:** {efficiency:.1f}% ({100-efficiency:.1f}% loss from optimal)
+- **Vibration Index:** {vibration:.1f} {'⚠️ ABNORMAL' if vibration > 60 else '✓ Normal'}
+- **Thermal Index:** {thermal:.1f} {'⚠️ ELEVATED' if thermal > 60 else '✓ Normal'}
+- **Dominant Issue:** {dominant_issue}
+
+**Operational Assessment**  
+The asset is currently operating at {efficiency:.1f}% efficiency with {'elevated' if vibration > 60 or thermal > 60 else 'acceptable'} stress indicators. Primary concern is {dominant_issue.lower()}-related degradation.
+
+---
+
+## 3️⃣ AI ROOT CAUSE ANALYSIS
+
+{root_cause}
+
+---
+
+## 4️⃣ RISK & FAILURE ASSESSMENT
+
+{risk_assessment}
+
+**Failure Likelihood:** {'HIGH - Failure imminent within days' if risk_level == 'Critical' else 'MODERATE-HIGH - Failure likely within weeks' if risk_level == 'High' else 'MODERATE - Gradual degradation expected' if risk_level == 'Medium' else 'LOW - Normal operational wear'}
+
+---
+
+## 5️⃣ MAINTENANCE RECOMMENDATIONS
+
+{recommendations}
+
+**Action Priority Matrix:**
+- **Immediate (0-6 hours):** {'Shutdown and inspect' if risk_level == 'Critical' else 'N/A'}
+- **Short-term (1-7 days):** {'Component replacement' if risk_level in ['Critical', 'High'] else 'Diagnostic inspection'}
+- **Long-term (1-3 months):** Preventive maintenance schedule revision
+
+---
+
+## 6️⃣ BUSINESS IMPACT ASSESSMENT
+
+{cost_impact}
+
+**Quantified Impact:**
+- **Efficiency Loss:** {100-efficiency:.1f}% reduction in output capacity
+- **Downtime Risk:** {'CRITICAL - Unplanned shutdown imminent' if risk_level == 'Critical' else 'HIGH - Significant disruption likely' if risk_level == 'High' else 'MODERATE - Manageable with planning' if risk_level == 'Medium' else 'LOW - Minimal impact expected'}
+- **Financial Exposure:** {'High - Emergency repairs + production loss' if risk_level in ['Critical', 'High'] else 'Moderate - Scheduled maintenance costs' if risk_level == 'Medium' else 'Low - Routine maintenance'}
+
+---
+
+## 📋 REPORT METADATA
+
+**Data Sources:** Sensor telemetry, ML predictions, AI diagnostic analysis  
+**Analysis Model:** Claude Sonnet 4.5 + Gemini 2.0 Flash  
+**Confidence Level:** {'High' if health_score > 60 else 'Medium'}  
+**Next Review:** Recommended within {'6 hours' if risk_level == 'Critical' else '48 hours' if risk_level == 'High' else '7 days'}
+
+---
+
+*This report is generated by AI-powered maintenance intelligence systems and should be reviewed by qualified maintenance personnel before taking action.*
+"""
+                
+                # Store in session state
+                st.session_state.generated_report = convert_markdown_to_html(report)
+                st.success("✅ Maintenance report generated successfully!")
+
         with col2:
-            st.button("📧 Email to Team", use_container_width=True, disabled=True, help="Feature coming soon")
-        with col3:
-            if st.button("🔄 Generate New Analysis", use_container_width=True):
-                del st.session_state.ai_analysis
-                st.rerun()
-    
+            if 'generated_report' in st.session_state:
+                if st.button("⬇️ Download Report (PDF)", use_container_width=True, help="Download professional PDF report"):
+                    # Import PDF generator
+                    from services.pdf_generator import generate_maintenance_pdf
+                    
+                    # Get data for PDF
+                    machine_data, prediction_data = get_machine_analytics(
+                        selected_index,
+                        st.session_state.uploaded_data,
+                        st.session_state.predictions
+                    )
+                    
+                    machine_id = machine_data.get('machine_id', 'UNKNOWN')
+                    health_score = prediction_data.get('health_score', 0)
+                    risk_level = prediction_data.get('risk_level', 'Unknown')
+                    
+                    # Generate PDF
+                    with st.spinner("🖨️ Generating PDF..."):
+                        try:
+                            pdf_bytes = generate_maintenance_pdf(
+                                report_text=st.session_state.generated_report,
+                                machine_id=machine_id,
+                                health_score=health_score,
+                                risk_level=risk_level
+                            )
+                            
+                            # Create download button
+                            filename = f"Maintenance_Report_{machine_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                            
+                            st.download_button(
+                                label="💾 Save PDF File",
+                                data=pdf_bytes,
+                                file_name=filename,
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                            
+                            st.success("✅ PDF generated successfully!")
+                        
+                        except Exception as e:
+                            st.error(f"❌ PDF generation failed: {str(e)}")
+            else:
+                st.button("⬇️ Download Report (PDF)", use_container_width=True, disabled=True, help="Generate a report first")
+
+        # Display generated report if available
+        if 'generated_report' in st.session_state:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("---")
+            st.markdown(st.session_state.generated_report)
+
     else:
         # Before analysis is generated
         st.markdown("""
@@ -981,7 +1151,6 @@ elif page == "🤖 AI Intelligence Hub":
             </p>
         </div>
         """, unsafe_allow_html=True)
-
 # ================= REPORTS =================
 elif page == "📄 Reports & Insights":
     st.markdown("### 📋 Automated Maintenance Reporting")
