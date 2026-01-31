@@ -6,3 +6,4 @@ joblib
 xgboost
 plotly
 python-dotenv
+google-generativeai
